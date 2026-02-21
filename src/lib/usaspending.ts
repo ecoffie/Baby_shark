@@ -9,8 +9,23 @@
 
 const USA_SPENDING_API = "https://api.usaspending.gov/api/v2/search/spending_by_award/";
 
+const FIELDS = [
+  "Award ID",
+  "Description",
+  "Award Amount",
+  "Recipient Name",
+  "Awarding Agency",
+  "Place of Performance Country Code",
+  "Start Date",
+  "number_of_offers_received",
+  "parent_award_piid",
+  "extent_competed",
+  "NAICS Code",
+  "PSC Code",
+];
+
 export interface USAspendingFilters {
-  award_amounts?: { lower_bound?: number; upper_bound?: number };
+  award_amounts?: { lower_bound?: number; upper_bound?: number }[];
   extent_competed_type_codes?: string[];
   place_of_performance_scope?: "domestic" | "foreign";
   award_type_codes?: string[];
@@ -18,16 +33,19 @@ export interface USAspendingFilters {
 }
 
 export interface USAspendingAward {
-  id: string;
-  award_amount: number;
-  description: string;
-  recipient_name: string;
-  number_of_offers_received?: number;
-  extent_competed?: string;
-  period_of_performance?: { start_date: string; end_date: string };
-  place_of_performance?: { country_code?: string };
-  awarding_agency?: { toptier_agency?: { name: string } };
-  parent_award_id?: string;
+  "Award ID": string;
+  "Award Amount": number;
+  Description: string;
+  "Recipient Name": string;
+  "Awarding Agency": string;
+  "Place of Performance Country Code": string | null;
+  "Start Date": string | null;
+  number_of_offers_received: number | null;
+  parent_award_piid: string | null;
+  extent_competed: string | null;
+  "NAICS Code": string | null;
+  "PSC Code": string | null;
+  generated_internal_id: string;
 }
 
 export async function searchSpendingByAward(
@@ -40,21 +58,23 @@ export async function searchSpendingByAward(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       filters: {
-        award_amounts: filters.award_amounts ?? { lower_bound: 1_000_000 },
+        award_amounts: filters.award_amounts ?? [{ lower_bound: 1_000_000 }],
         extent_competed_type_codes: filters.extent_competed_type_codes ?? ["C", "G", "NDO", "E"],
         place_of_performance_scope: filters.place_of_performance_scope ?? "foreign",
         award_type_codes: filters.award_type_codes ?? ["A", "B", "C", "D"],
         ...(filters.psc_codes && { psc_codes: filters.psc_codes }),
       },
+      fields: FIELDS,
       page,
       limit,
       order: "desc",
-      sort: "award_amount",
+      sort: "Award Amount",
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`USA Spending API error: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`USA Spending API error: ${response.status} — ${body.slice(0, 200)}`);
   }
 
   const data = (await response.json()) as {
