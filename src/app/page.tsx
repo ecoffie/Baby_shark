@@ -97,11 +97,34 @@ interface DashboardResponse {
   error?: string;
 }
 
+interface HistoricalAward {
+  award_id: string;
+  title: string;
+  amount: number;
+  date: string | null;
+  agency: string;
+  recipient: string;
+  offers: number | null;
+  url?: string;
+}
+
+interface HistorySummary {
+  previously_solicited: boolean;
+  is_recompete: boolean;
+  prior_awards_count: number;
+  prior_awards: HistoricalAward[];
+  competition_history: { average_bidders: number | null; min_bidders: number | null; max_bidders: number | null; data_points: number } | null;
+  incumbent_analysis: { likely_incumbent: { name: string; wins: number; total_value: number; last_award: string | null } | null; all_incumbents: { name: string; wins: number; total_value: number }[] } | null;
+  summary: string;
+}
+
 interface Brief {
   essentials: globalThis.Record<string, unknown>;
   client_fit: globalThis.Record<string, unknown>;
-  incumbent: { name: string | null; other_awards_count: number; other_awards: { title: string; amount: number; agency: string }[]; total_other_value: number };
-  recompete_signals: { age_years: number | null; signal_strength: string; estimated_recompete: string | null };
+  incumbent?: { name: string | null; other_awards_count: number; other_awards: { title: string; amount: number; agency: string }[]; total_other_value: number };
+  recompete_signals?: { age_years: number | null; signal_strength: string; estimated_recompete: string | null };
+  contact?: { name: string | null; email: string | null; phone: string | null };
+  history?: HistorySummary;
   next_steps: string[];
 }
 
@@ -208,13 +231,14 @@ export default function Dashboard() {
     }
   };
 
-  const loadBrief = async (awardId: string) => {
+  const loadBrief = async (awardId: string, briefSource: "awards" | "opportunities" = "awards") => {
     if (expandedBrief === awardId) { setExpandedBrief(null); return; }
     setExpandedBrief(awardId);
     if (briefData[awardId]) return;
     setBriefLoading(awardId);
     try {
-      const res = await fetch(`/api/brief/${encodeURIComponent(awardId)}`);
+      const params = briefSource === "opportunities" ? "?source=opportunities" : "";
+      const res = await fetch(`/api/brief/${encodeURIComponent(awardId)}${params}`);
       const json = await res.json();
       if (json.ok) setBriefData((prev) => ({ ...prev, [awardId]: json.brief }));
     } catch { /* user can retry */ } finally { setBriefLoading(null); }
@@ -535,18 +559,35 @@ export default function Dashboard() {
                         )}
 
                         <div className="mt-3 flex items-center gap-3">
+                          <button onClick={() => loadBrief(opp.notice_id, "opportunities")}
+                            className="text-sm text-blue-600 hover:text-blue-800 font-medium">
+                            {expandedBrief === opp.notice_id ? "Hide Brief" : "View Brief + History"}
+                          </button>
                           {opp.sam_url && (
                             <a href={opp.sam_url} target="_blank" rel="noopener noreferrer"
-                              className="text-sm text-blue-600 hover:text-blue-800 font-medium">View on SAM.gov</a>
+                              className="text-sm text-gray-500 hover:text-gray-700 underline">SAM.gov</a>
                           )}
                           {opp.contact_email && (
                             <a href={`mailto:${opp.contact_email}`}
                               className="text-sm text-gray-500 hover:text-gray-700 underline">
-                              Contact: {opp.contact_name || opp.contact_email}
+                              {opp.contact_name || opp.contact_email}
                             </a>
                           )}
                         </div>
                       </div>
+
+                      {/* Expanded Brief with History */}
+                      {expandedBrief === opp.notice_id && briefData[opp.notice_id] && (
+                        <div className="border-t border-gray-200 bg-gray-50 p-4">
+                          <BriefPanel brief={briefData[opp.notice_id]} details={details} />
+                        </div>
+                      )}
+                      {expandedBrief === opp.notice_id && briefLoading === opp.notice_id && (
+                        <div className="border-t border-gray-200 bg-gray-50 p-4 text-center">
+                          <div className="inline-block animate-spin rounded-full h-6 w-6 border-2 border-gray-300 border-t-blue-600" />
+                          <p className="text-xs text-gray-500 mt-1">Searching historical records...</p>
+                        </div>
+                      )}
                     </div>
                   );
                 }
@@ -658,57 +699,152 @@ export default function Dashboard() {
 
 /* ── Brief expansion panel ── */
 function BriefPanel({ brief, details }: { brief: Brief; details: FitDetails | null }) {
+  const history = brief.history;
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="bg-white rounded-md border border-gray-200 p-3">
-        <h4 className="font-semibold text-sm text-gray-800 mb-2">Client Fit Analysis</h4>
-        <div className="space-y-1 text-xs">
-          {details && [
-            { label: "NAICS", reason: details.naics_reason, score: details.naics_score },
-            { label: "PSC", reason: details.psc_reason, score: details.psc_score },
-            { label: "Geographic", reason: details.geo_reason, score: details.geo_score },
-            { label: "Agency", reason: details.agency_reason, score: details.agency_score },
-            { label: "Competition", reason: details.competition_reason, score: details.competition_score },
-            { label: "Amount", reason: details.amount_reason, score: details.amount_score },
-          ].map((item) => (
-            <div key={item.label} className="flex justify-between">
-              <span className="text-gray-600">{item.label}: {item.reason}</span>
-              <span className={`font-mono ${item.score > 0 ? "text-green-700" : "text-gray-400"}`}>+{item.score}</span>
+    <div className="space-y-4">
+      {/* Historical Cross-Reference — the key intelligence */}
+      {history && (
+        <div className={`rounded-md border p-4 ${
+          history.is_recompete ? "bg-amber-50 border-amber-300" : "bg-green-50 border-green-200"
+        }`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+              history.is_recompete ? "bg-amber-200 text-amber-900" : "bg-green-200 text-green-900"
+            }`}>
+              {history.is_recompete ? "RECOMPETE" : "NEW REQUIREMENT"}
+            </span>
+            {history.competition_history && history.competition_history.average_bidders != null && (
+              <span className="text-xs font-medium bg-white px-2 py-1 rounded-full border border-gray-200">
+                Avg {history.competition_history.average_bidders} bidder{history.competition_history.average_bidders !== 1 ? "s" : ""} historically
+                {history.competition_history.min_bidders != null && history.competition_history.max_bidders != null &&
+                  history.competition_history.min_bidders !== history.competition_history.max_bidders &&
+                  ` (range: ${history.competition_history.min_bidders}-${history.competition_history.max_bidders})`}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-700 mb-3">{history.summary}</p>
+
+          {/* Incumbent analysis */}
+          {history.incumbent_analysis?.likely_incumbent && (
+            <div className="mb-3">
+              <p className="text-xs font-semibold text-gray-700 mb-1">Likely Incumbent</p>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-900">{history.incumbent_analysis.likely_incumbent.name}</span>
+                <span className="text-xs bg-white px-2 py-0.5 rounded border border-gray-200">
+                  {history.incumbent_analysis.likely_incumbent.wins} win{history.incumbent_analysis.likely_incumbent.wins !== 1 ? "s" : ""} &middot; {fmtCompact(history.incumbent_analysis.likely_incumbent.total_value)}
+                </span>
+              </div>
+              {history.incumbent_analysis.all_incumbents.length > 1 && (
+                <div className="mt-1 text-xs text-gray-500">
+                  Other winners: {history.incumbent_analysis.all_incumbents.slice(1, 4).map((inc) => inc.name).join(", ")}
+                </div>
+              )}
             </div>
-          ))}
+          )}
+
+          {/* Prior awards table */}
+          {history.prior_awards.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-700 mb-1">Prior Awards ({history.prior_awards_count})</p>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {history.prior_awards.slice(0, 8).map((award, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs bg-white rounded px-2 py-1.5 border border-gray-100">
+                    <div className="flex-1 min-w-0">
+                      <span className="text-gray-900 truncate block">{award.title}</span>
+                      <span className="text-gray-500">{award.recipient} &middot; {fmtDate(award.date)}</span>
+                    </div>
+                    <div className="text-right shrink-0 ml-3">
+                      <span className="font-medium text-gray-900">{fmt(award.amount)}</span>
+                      {award.offers != null && (
+                        <span className={`ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                          award.offers === 1 ? "bg-green-100 text-green-800" :
+                          award.offers <= 3 ? "bg-yellow-100 text-yellow-800" : "bg-gray-100 text-gray-600"
+                        }`}>{award.offers} bid{award.offers !== 1 ? "s" : ""}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      </div>
-      <div className="bg-white rounded-md border border-gray-200 p-3">
-        <h4 className="font-semibold text-sm text-gray-800 mb-2">Incumbent Analysis</h4>
-        <p className="text-xs text-gray-600 mb-1"><span className="font-medium">{brief.incumbent.name ?? "Unknown"}</span></p>
-        <p className="text-xs text-gray-500 mb-2">
-          {brief.incumbent.other_awards_count} other award{brief.incumbent.other_awards_count !== 1 ? "s" : ""} ({fmtCompact(brief.incumbent.total_other_value)})
-        </p>
-        {brief.incumbent.other_awards.slice(0, 3).map((a, i) => (
-          <div key={i} className="text-xs text-gray-500 truncate">{fmt(a.amount)} &middot; {a.agency} &middot; {a.title}</div>
-        ))}
-      </div>
-      <div className="bg-white rounded-md border border-gray-200 p-3">
-        <h4 className="font-semibold text-sm text-gray-800 mb-2">Recompete Signals</h4>
-        <p className="text-xs text-gray-600">Age: {brief.recompete_signals.age_years ?? "?"} years</p>
-        <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-          brief.recompete_signals.signal_strength === "strong" ? "bg-red-100 text-red-800"
-          : brief.recompete_signals.signal_strength === "moderate" ? "bg-amber-100 text-amber-800"
-          : "bg-gray-100 text-gray-600"
-        }`}>{brief.recompete_signals.signal_strength} signal</span>
-        {brief.recompete_signals.estimated_recompete && (
-          <p className="text-xs text-gray-600 mt-1">Est: {brief.recompete_signals.estimated_recompete}</p>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Client Fit */}
+        <div className="bg-white rounded-md border border-gray-200 p-3">
+          <h4 className="font-semibold text-sm text-gray-800 mb-2">Client Fit Analysis</h4>
+          <div className="space-y-1 text-xs">
+            {details && [
+              { label: "NAICS", reason: details.naics_reason, score: details.naics_score },
+              { label: "PSC", reason: details.psc_reason, score: details.psc_score },
+              { label: "Geographic", reason: details.geo_reason, score: details.geo_score },
+              { label: "Agency", reason: details.agency_reason, score: details.agency_score },
+              { label: "Competition", reason: details.competition_reason, score: details.competition_score },
+              { label: "Amount", reason: details.amount_reason, score: details.amount_score },
+            ].map((item) => (
+              <div key={item.label} className="flex justify-between">
+                <span className="text-gray-600">{item.label}: {item.reason}</span>
+                <span className={`font-mono ${item.score > 0 ? "text-green-700" : "text-gray-400"}`}>+{item.score}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Incumbent (for awards) */}
+        {brief.incumbent && (
+          <div className="bg-white rounded-md border border-gray-200 p-3">
+            <h4 className="font-semibold text-sm text-gray-800 mb-2">Incumbent Analysis</h4>
+            <p className="text-xs text-gray-600 mb-1"><span className="font-medium">{brief.incumbent.name ?? "Unknown"}</span></p>
+            <p className="text-xs text-gray-500 mb-2">
+              {brief.incumbent.other_awards_count} other award{brief.incumbent.other_awards_count !== 1 ? "s" : ""} ({fmtCompact(brief.incumbent.total_other_value)})
+            </p>
+            {brief.incumbent.other_awards.slice(0, 3).map((a, i) => (
+              <div key={i} className="text-xs text-gray-500 truncate">{fmt(a.amount)} &middot; {a.agency} &middot; {a.title}</div>
+            ))}
+          </div>
         )}
-      </div>
-      <div className="bg-white rounded-md border border-gray-200 p-3">
-        <h4 className="font-semibold text-sm text-gray-800 mb-2">Recommended Next Steps</h4>
-        <ul className="space-y-1">
-          {brief.next_steps.map((step, i) => (
-            <li key={i} className="text-xs text-gray-600 flex items-start gap-1.5">
-              <span className="text-blue-500 mt-0.5 shrink-0">&rarr;</span>{step}
-            </li>
-          ))}
-        </ul>
+
+        {/* Contact (for opportunities) */}
+        {brief.contact && (brief.contact.name || brief.contact.email) && (
+          <div className="bg-white rounded-md border border-gray-200 p-3">
+            <h4 className="font-semibold text-sm text-gray-800 mb-2">Contracting Officer</h4>
+            {brief.contact.name && <p className="text-xs text-gray-900 font-medium">{brief.contact.name}</p>}
+            {brief.contact.email && (
+              <a href={`mailto:${brief.contact.email}`} className="text-xs text-blue-600 hover:underline block">{brief.contact.email}</a>
+            )}
+            {brief.contact.phone && <p className="text-xs text-gray-500">{brief.contact.phone}</p>}
+          </div>
+        )}
+
+        {/* Recompete Signals (for awards) */}
+        {brief.recompete_signals && (
+          <div className="bg-white rounded-md border border-gray-200 p-3">
+            <h4 className="font-semibold text-sm text-gray-800 mb-2">Recompete Signals</h4>
+            <p className="text-xs text-gray-600">Age: {brief.recompete_signals.age_years ?? "?"} years</p>
+            <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+              brief.recompete_signals.signal_strength === "strong" ? "bg-red-100 text-red-800"
+              : brief.recompete_signals.signal_strength === "moderate" ? "bg-amber-100 text-amber-800"
+              : "bg-gray-100 text-gray-600"
+            }`}>{brief.recompete_signals.signal_strength} signal</span>
+            {brief.recompete_signals.estimated_recompete && (
+              <p className="text-xs text-gray-600 mt-1">Est: {brief.recompete_signals.estimated_recompete}</p>
+            )}
+          </div>
+        )}
+
+        {/* Next Steps */}
+        <div className="bg-white rounded-md border border-gray-200 p-3">
+          <h4 className="font-semibold text-sm text-gray-800 mb-2">Recommended Next Steps</h4>
+          <ul className="space-y-1">
+            {brief.next_steps.map((step, i) => (
+              <li key={i} className="text-xs text-gray-600 flex items-start gap-1.5">
+                <span className="text-blue-500 mt-0.5 shrink-0">&rarr;</span>{step}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
     </div>
   );

@@ -83,3 +83,104 @@ export async function searchSpendingByAward(
   };
   return data;
 }
+
+/**
+ * Search USA Spending for historical awards matching a solicitation.
+ * Used to determine: was this ever solicited before? How many bidders?
+ * Searches by keyword (title), NAICS, and agency to find prior awards.
+ */
+export async function searchHistoricalAwards(opts: {
+  keywords?: string;
+  naics?: string;
+  agency?: string;
+  solicitationNumber?: string;
+}): Promise<USAspendingAward[]> {
+  const allResults: USAspendingAward[] = [];
+  const seen = new Set<string>();
+
+  // Strategy 1: Search by keyword from the title (most reliable cross-reference)
+  if (opts.keywords && opts.keywords.length > 5) {
+    // Extract key terms — take first 3 meaningful words (skip generic ones)
+    const skipWords = new Set(["the", "of", "for", "and", "to", "in", "a", "an", "services", "support", "contract", "task", "order"]);
+    const terms = opts.keywords
+      .replace(/[^a-zA-Z0-9\s]/g, "")
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !skipWords.has(w.toLowerCase()))
+      .slice(0, 4)
+      .join(" ");
+
+    if (terms.length > 3) {
+      try {
+        const response = await fetch("https://api.usaspending.gov/api/v2/search/spending_by_award/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filters: {
+              award_type_codes: ["A", "B", "C", "D"],
+              keywords: [terms],
+              ...(opts.naics ? { naics_codes: { require: [opts.naics] } } : {}),
+            },
+            fields: [...FIELDS, "generated_internal_id"],
+            page: 1,
+            limit: 25,
+            order: "desc",
+            sort: "Award Amount",
+          }),
+        });
+
+        if (response.ok) {
+          const data = (await response.json()) as { results: USAspendingAward[] };
+          for (const r of data.results ?? []) {
+            const id = r.generated_internal_id ?? r["Award ID"];
+            if (!seen.has(id)) {
+              seen.add(id);
+              allResults.push(r);
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — continue with other strategies
+      }
+    }
+  }
+
+  // Strategy 2: Search by NAICS + agency combo (catches related work)
+  if (opts.naics && opts.agency) {
+    try {
+      // Extract first meaningful word from agency
+      const agencyKeyword = opts.agency.split(/[>\-\/]/).pop()?.trim().split(/\s+/).slice(0, 2).join(" ");
+
+      const response = await fetch("https://api.usaspending.gov/api/v2/search/spending_by_award/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filters: {
+            award_type_codes: ["A", "B", "C", "D"],
+            naics_codes: { require: [opts.naics] },
+            ...(agencyKeyword ? { keywords: [agencyKeyword] } : {}),
+          },
+          fields: [...FIELDS, "generated_internal_id"],
+          page: 1,
+          limit: 15,
+          order: "desc",
+          sort: "Award Amount",
+        }),
+      });
+
+      if (response.ok) {
+        const data = (await response.json()) as { results: USAspendingAward[] };
+        for (const r of data.results ?? []) {
+          const id = r.generated_internal_id ?? r["Award ID"];
+          if (!seen.has(id)) {
+            seen.add(id);
+            allResults.push(r);
+          }
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  return allResults;
+}
