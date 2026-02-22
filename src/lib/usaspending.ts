@@ -117,6 +117,7 @@ export async function searchHistoricalAwards(opts: {
           body: JSON.stringify({
             filters: {
               award_type_codes: ["A", "B", "C", "D"],
+              award_amounts: [{ lower_bound: 1_000_000 }],
               keywords: [terms],
               ...(opts.naics ? { naics_codes: { require: [opts.naics] } } : {}),
             },
@@ -156,6 +157,7 @@ export async function searchHistoricalAwards(opts: {
         body: JSON.stringify({
           filters: {
             award_type_codes: ["A", "B", "C", "D"],
+            award_amounts: [{ lower_bound: 1_000_000 }],
             naics_codes: { require: [opts.naics] },
             ...(agencyKeyword ? { keywords: [agencyKeyword] } : {}),
           },
@@ -182,5 +184,6 @@ export async function searchHistoricalAwards(opts: {
     }
   }
 
-  return allResults;
+  // Final filter: ensure nothing under $1M slips through
+  return allResults.filter((r) => (r["Award Amount"] ?? 0) >= 1_000_000);
 }

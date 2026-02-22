@@ -173,6 +173,7 @@ async function buildOpportunityBrief(supabase: ReturnType<typeof getSupabase>, n
   const { data: dbMatches } = await supabase
     .from("low_competition_awards")
     .select("award_id, title, amount, award_date, agency, recipient_name, number_of_offers, naics, psc_code")
+    .gte("amount", 1_000_000)
     .or(`naics.eq.${opp.naics_code},agency.ilike.%${(opp.agency ?? "").split(">").pop()?.trim().split(" ").slice(0, 2).join(" ") ?? "NOMATCH"}%`)
     .order("amount", { ascending: false })
     .limit(15);
